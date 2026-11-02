@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Merx Studio web portal",
   "scripts": {
-    "check": "node --check assets/app.js && node --check assets/domain.js && node --check assets/i18n.js && node --check assets/vision.js",
+    "check": "node --check assets/app.js && node --check assets/domain.js && node --check assets/i18n.js && node --check assets/vision.js && node --check assets/flow.js && node --check assets/flow-editor.js && node --check assets/flow-i18n.js",
     "test": "node --test tests/*.test.mjs"
   }
 }

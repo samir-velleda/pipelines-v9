@@ -1,5 +1,7 @@
-import { CATALOG, TEMPLATES, DOCS, createProject, validateProject, buildManifest, generateRust, generateFlow, interpretPrompt, buildExecutableSpec, clampTargetFps, displayStatus, statusTone, nextProjectStatus, showDwellField, triggerKey, loginArrival, buildTestPayload } from './domain.js?v=20261102a';
-import { t, localeTag, getLocale, setLocale, initLocale, persistLocale, formatDate, formatPrice, contentFor, LOCALE_NAMES, SUPPORTED_LOCALES } from './i18n.js?v=20261102a';
+import { CATALOG, TEMPLATES, DOCS, createProject, validateProject, buildManifest, generateRust, generateFlow, interpretPrompt, buildExecutableSpec, clampTargetFps, displayStatus, statusTone, nextProjectStatus, showDwellField, triggerKey, loginArrival, buildTestPayload } from './domain.js?v=20261102b';
+import { t, localeTag, getLocale, setLocale, initLocale, persistLocale, formatDate, formatPrice, contentFor, LOCALE_NAMES, SUPPORTED_LOCALES } from './i18n.js?v=20261102b';
+import { FLOW_SCHEMA, blockDefaults, compileFlow, createHistory, flowTestGate, migrateLegacy, pushHistory, redoHistory, undoHistory } from './flow.js?v=20261102b';
+import { flowEditorHtml, mountFlowEditor } from './flow-editor.js?v=20261102b';
 initLocale(localStorage, globalThis.navigator?.language);
 const localeLabel = () => LOCALE_NAMES[getLocale()];
 
@@ -38,7 +40,7 @@ const paths = {
   lab:'M9 3h6M10 3v7l-6 9a1.3 1.3 0 0 0 1 2h14a1.3 1.3 0 0 0 1-2l-6-9V3M8 15h8',
   upload:'M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5', download:'M12 3v13m-5-5 5 5 5-5M4 16v5h16v-5',
   copy:'M8 8h13v13H8zM16 4V2H2v14h2', edit:'m15 4 5 5M3 21l5-1L21 7a2 2 0 0 0-5-5L3 15Z',
-  undo:'M3 10h11a7 7 0 0 1 0 14M3 10l5-5M3 10l5 5', more:'M5 12h.01M12 12h.01M19 12h.01',
+  undo:'M3 10h11a7 7 0 0 1 0 14M3 10l5-5M3 10l5 5', redo:'M21 10H10a7 7 0 0 0 0 14M21 10l-5-5M21 10l-5 5', more:'M5 12h.01M12 12h.01M19 12h.01',
   trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7', search:'M15.5 15.5 5 5M3 10a7 7 0 1 0 14 0 7 7 0 1 0-14 0',
   shield:'m12 2 9 4v6c0 6-9 10-9 10S3 18 3 12V6ZM8 12l3 3 5-6',
   book:'M12 5v16M3 3c4 0 7 0 9 2 2-2 5-2 9-2v16c-4 0-7 0-9 2-2-2-5-2-9-2Z',
@@ -170,7 +172,7 @@ function builderPage(project) {
   return `${header('builder',true)}<main class="builder" id="main-content"><div class="builder-header"><div class="builder-title-area"><a href="#/projects" class="back-button" aria-label="${t('builder.back')}">${icon('chevron',17)}</a><div><button class="builder-project-title" data-action="rename-project">${esc(project.name)}${icon('down',14)}</button><span class="save-indicator">${ui.storageError?t('builder.notSaved'):`${icon('check',12)} ${t('builder.saved')}`}</span></div>${statusBadge(project)}</div><div class="builder-header-actions">${button('','undo','ghost icon-btn','undo','aria-label="Desfazer última alteração" '+(!ui.undo[project.id]?.length?'disabled':''))}${ui.auth?button('Salvar na conta','cloud-save','secondary small','cloud'):''}${button('Exportar','export-project','secondary small','download')}${button('Publicar','publish-tab','primary small','upload')}</div></div>
     <div class="mobile-builder-tabs" role="tablist" aria-label="Área do construtor"><button data-action="mobile-chat" class="${ui.mobile==='chat'?'active':''}" role="tab" aria-selected="${ui.mobile==='chat'}">${icon('chat',16)} ${t('builder.conversar')}</button><button data-action="mobile-preview" class="${ui.mobile==='preview'?'active':''}" role="tab" aria-selected="${ui.mobile==='preview'}">${icon('grid',16)} ${t('builder.tab.analytic')}</button></div>
     <div class="builder-layout" data-mobile-view="${ui.mobile}"><section class="chat-panel" aria-label="Conversa com o construtor"><div class="chat-header"><div>${icon('spark',17)}<strong>${t('builder.chatTitle')}</strong></div><span class="chat-mode-dot" title="${ui.auth&&ui.config.apiBase?'Assistente conectado':'Assistente de configuração local'}"></span></div><div class="chat-messages" id="chat-messages" aria-live="polite" aria-relevant="additions">${messagesHtml(project)}${ui.thinking&&ui.busyProject===project.id?`<div class="assistant-thinking">${mark(true)}<span>Organizando seu analítico<i></i><i></i><i></i></span></div>`:''}</div><div class="chat-bottom"><div class="context-strip">${icon('folder',13)} <span>${esc(project.name)}</span><span>·</span><span>v${esc(project.version||'0.1.0')}</span></div>${promptForm('chat')}<p class="composer-hint">Enter para enviar · Shift + Enter para nova linha</p></div></section>
-    <section class="preview-panel" aria-label="Construtor do analítico"><nav class="preview-tabs" role="tablist" aria-label="Etapas do analítico">${[['analytic',t('builder.tab.analytic'),'grid'],['flow',t('builder.tab.flow'),'flow'],['code',t('builder.tab.code'),'code'],['test',t('builder.tab.test'),'play'],['publish',t('builder.tab.publish'),'store']].map(([id,label,ico])=>`<button class="tab ${ui.tab===id?'active':''}" data-action="builder-tab" data-tab="${id}" role="tab" aria-selected="${ui.tab===id}">${icon(ico,16)}${label}</button>`).join('')}</nav><div class="preview-content" id="preview-content">${previewContent(project)}</div></section></div></main>`;
+    <section class="preview-panel" aria-label="Construtor do analítico"><nav class="preview-tabs" role="tablist" aria-label="Etapas do analítico">${[['analytic',t('builder.tab.analytic'),'grid'],['flow',t('builder.tab.flow'),'flow'],['code',t('builder.tab.code'),'code'],['test',t('builder.tab.test'),'play'],['publish',t('builder.tab.publish'),'store']].map(([id,label,ico])=>`<button class="tab ${ui.tab===id?'active':''}" data-action="builder-tab" data-tab="${id}" role="tab" aria-selected="${ui.tab===id}">${icon(ico,16)}${label}</button>`).join('')}</nav><div class="preview-content${ui.tab==='flow'?' is-flow':''}" id="preview-content">${previewContent(project)}</div></section></div></main>`;
 }
 function previewContent(project) {return ui.tab==='flow'?flowPanel(project):ui.tab==='code'?codePanel(project):ui.tab==='test'?testPanel(project):ui.tab==='publish'?publishPanel(project):analyticPanel(project);}
 function configLabels(project) {
@@ -222,10 +224,60 @@ function ruleSentence(project) {
   if(c.mode==='line_crossing')return `Observar ${classes} com confiança mínima de ${Math.round(c.confidence*100)}%, acompanhar o cruzamento da linha e gerar eventos respeitando um intervalo de ${c.cooldownSeconds} segundos.`;
   return `Identificar ${classes} na área selecionada${c.mode==='dwell'?`, aguardar ${c.minDurationSeconds} segundos de permanência`:''} e gerar um evento. Confiança mínima de ${Math.round(c.confidence*100)}%, com intervalo de ${c.cooldownSeconds} segundos entre eventos.`;
 }
+function flowViewFor(id) {ui.flowView||={};return ui.flowView[id]||={selectedId:null,panX:28,panY:20,zoom:1,query:'',notice:null};}
+function flowHistoryFor(id) {ui.flowHistory||={};return ui.flowHistory[id]||=createHistory();}
+function workingGraph(project) {
+  if(project.flow?.schema===FLOW_SCHEMA)return project.flow;
+  ui.flowDraft||={};
+  return ui.flowDraft[project.id]||=migrateLegacy(project,{locale:localeTag()});
+}
+function syncGraphFromConfiguration(project) {
+  if(!project||(project.flow?.schema!==FLOW_SCHEMA&&!ui.flowDraft?.[project.id]))return;
+  const graph=migrateLegacy(project,{locale:localeTag()});
+  if(project.flow?.schema===FLOW_SCHEMA)project.flow=graph;
+  if(ui.flowDraft)delete ui.flowDraft[project.id];
+  if(ui.flowHistory)ui.flowHistory[project.id]=createHistory();
+  if(ui.flowView?.[project.id])ui.flowView[project.id].notice=null;
+}
+function commitFlow(project,op) {
+  const result=pushHistory(flowHistoryFor(project.id),workingGraph(project),op);
+  if(result.error)return result;
+  project.flow=result.graph;
+  if(ui.flowDraft)delete ui.flowDraft[project.id];
+  const compiled=compileFlow(result.graph,project);
+  if(compiled.supported&&compiled.configuration)project.configuration=compiled.configuration;
+  touch(project);
+  return result;
+}
+function applyFlowHistory(project,direction) {
+  const history=flowHistoryFor(project.id);
+  const result=direction==='redo'?redoHistory(history,workingGraph(project)):undoHistory(history,workingGraph(project));
+  if(result.error)return result;
+  project.flow=result.graph;
+  if(ui.flowDraft)delete ui.flowDraft[project.id];
+  const compiled=compileFlow(result.graph,project);
+  if(compiled.supported&&compiled.configuration)project.configuration=compiled.configuration;
+  touch(project);
+  return result;
+}
+function bindFlowEditor(project) {
+  if(!project)return;
+  const previous=ui.flowAbort;
+  ui.flowAbort=mountFlowEditor({
+    abort:previous,
+    graph:()=>workingGraph(project),
+    view:()=>flowViewFor(project.id),
+    history:()=>flowHistoryFor(project.id),
+    t,icon,esc,uid,
+    commit(op){const result=commitFlow(project,op);const view=flowViewFor(project.id);view.notice=result.error||null;if(!result.error&&op.op==='add_node')view.selectedId=op.id;refreshPreview();return result;},
+    refresh(){refreshPreview();},
+    showNotice(notice){flowViewFor(project.id).notice=notice;refreshPreview();},
+  });
+}
 function flowPanel(project) {
-  const c=project.configuration;
-  const steps=[['camera','Entrada de vídeo','Câmera ou arquivo','source'],['chip','Preparar imagem','Redimensionamento e normalização · processamento padrão','std'],['spark','Detectar objetos',c.backendPolicy==='standard'?'Modelo de visão · processamento padrão no Merx':'Modelo de visão · aceleração Merx no Merx',c.backendPolicy==='standard'?'std':'accel'],['people','Acompanhar objetos','Associação temporal · processamento padrão','std'],[c.mode==='line_crossing'?'crossing':'target',MODES[c.mode],c.mode==='dwell'?`Permanência de ${c.minDurationSeconds}s`:`Confiança mínima de ${Math.round(c.confidence*100)}%`,'rule'],['bell','Gerar evento',`Intervalo mínimo de ${c.cooldownSeconds}s`,'event']];
-  return `<div class="preview-toolbar"><div><span class="section-eyebrow">COMO FUNCIONA</span><h2>Da imagem ao evento.</h2></div>${button('Editar regras','edit-config','secondary small','settings')}</div><div class="flow-intro"><p>${c.backendPolicy==='standard'?'O processamento principal organiza os frames e executa o modelo no perfil processamento padrão.':'O processamento principal organiza os frames. A aceleração Merx executa o modelo no perfil acelerado.'} As regras transformam detecções em eventos úteis.</p></div><div class="flow-canvas"><div class="flow-grid-background"></div><div class="flow-nodes">${steps.map(([ico,title,detail,kind],i)=>`${i?'<div class="flow-connector"><span></span></div>':''}<div class="flow-node ${kind}"><span class="flow-node-icon">${icon(ico,22)}</span><div><small>0${i+1}</small><strong>${title}</strong><p>${detail}</p></div><span class="flow-node-tag">${kind==='accel'?'aceleração Merx':kind==='std'?'processamento padrão':kind==='source'?'INPUT':kind==='event'?'OUTPUT':'REGRA'}</span></div>`).join('')}</div></div><div class="notice">${icon('info',17)}<div><strong>Fluxo de execução planejado</strong><p>A execução na aceleração Merx requer modelo compilado e integração com o runtime MNM. O teste no navegador usa o processamento disponível no seu computador.</p></div></div>`;
+  const view=flowViewFor(project.id);
+  if(!view.fitted){const graph=workingGraph(project);const maxX=Math.max(520,...graph.nodes.map(node=>node.ui.x+280));const maxY=Math.max(420,...graph.nodes.map(node=>node.ui.y+150));view.zoom=Math.min(1,Math.max(0.62,Math.min(860/maxX,560/maxY)));view.panX=20;view.panY=12;view.fitted=true;}
+  return flowEditorHtml({graph:workingGraph(project),view,history:flowHistoryFor(project.id),t,icon,esc});
 }
 function currentCode(project) {return ui.codeFile==='spec'?JSON.stringify(buildExecutableSpec(project),null,2):ui.codeFile==='manifest'?JSON.stringify(buildManifest(project),null,2):ui.codeFile==='config'?JSON.stringify(project.configuration,null,2):(project.customSource||generateRust(project));}
 function codePanel(project) {
@@ -245,8 +297,8 @@ function merxTestSection(project){
   if(!acc.linked)return `<div class="notice">${icon('info',18)}<div><strong>${t('merx.mineT')}</strong><p>${t('merx.notLinked')}</p></div></div>`;
   const d=ui.merxDevices;if(!d){queueMicrotask(loadMerxDevices);return `<p class="muted">${t('merx.loading')}</p>`;}
   const synced=d.synced||[];const cams=[];for(const dev of d.devices||[])for(const c of dev.cameras)if(!synced.length||synced.some(x=>x.deviceId===dev.id&&x.cameraId===c.id))cams.push({dev,c});
-  const test=ui.merxTest;
-  return `<section class="card merx-tests"><div class="card-body"><span class="section-eyebrow">${t('merx.testMode')}</span><h3>${t('merx.mineT')}</h3><p class="small-text muted">${t('merx.testB')}</p>${cams.length?`<ul class="merx-cams">${cams.map(({dev,c})=>`<li><span><strong>${esc(dev.name)}</strong> · ${esc(c.name)} · ${dev.testReady?t('merx.ready'):dev.online?t('merx.updateNeeded'):t('merx.offline')}${dev.testReady&&!dev.geometryReady?` · <em class="muted">${t('merx.geometryPending')}</em>`:''}</span>${button(t('merx.sendTest'),'merx-send-test','secondary small','upload',`data-device="${esc(dev.id)}" data-camera="${esc(c.id)}" ${dev.testReady?'':'disabled'}`)}</li>`).join('')}</ul>`:`<p>${t('merx.noCameras')}</p>`}
+  const test=ui.merxTest;const gate=flowTestGate(project);
+  return `<section class="card merx-tests"><div class="card-body"><span class="section-eyebrow">${t('merx.testMode')}</span><h3>${t('merx.mineT')}</h3><p class="small-text muted">${t('merx.testB')}</p>${!gate.ok?`<p class="help">${esc(t('flow.testBlocked'))}</p>`:''}${cams.length?`<ul class="merx-cams">${cams.map(({dev,c})=>`<li><span><strong>${esc(dev.name)}</strong> · ${esc(c.name)} · ${dev.testReady?t('merx.ready'):dev.online?t('merx.updateNeeded'):t('merx.offline')}${dev.testReady&&!dev.geometryReady?` · <em class="muted">${t('merx.geometryPending')}</em>`:''}</span>${button(t('merx.sendTest'),'merx-send-test','secondary small','upload',`data-device="${esc(dev.id)}" data-camera="${esc(c.id)}" title="${esc(t(gate.ok?'merx.sendTest':'flow.testBlocked'))}" ${dev.testReady&&gate.ok?'':'disabled'}`)}</li>`).join('')}</ul>`:`<p>${t('merx.noCameras')}</p>`}
   ${test?`<div class="notice ${test.device?.accepted?'success':''}">${icon('chip',18)}<div><strong>${t('merx.testLabel')} · ${esc(test.analyticId)}</strong><p>${test.device?(test.device.accepted===true?t('merx.accepted'):test.device.accepted===false?t('merx.refused',{s:esc(test.device.status)}):t('merx.waiting')):t('merx.queued')}</p><p class="small-text muted">${t('merx.removeNote')}</p>${button(t('merx.check'),'merx-test-status','ghost small','refresh')}</div></div>`:''}</div></section>`;}
 function testPanel(project) {return testPanelBase(project)+merxTestSection(project);}
 function testPanelBase(project) {
@@ -415,12 +467,13 @@ function afterRender() {
   if(route().name==='builder'){
     const messages=$('#chat-messages');if(messages)messages.scrollTop=messages.scrollHeight;
     if(ui.tab==='test')attachMedia();
+    if(ui.tab==='flow')bindFlowEditor(getProject());
   }
 }
-function refreshPreview() {const project=getProject();if(project&&$('#preview-content')){$('#preview-content').innerHTML=previewContent(project);if(ui.tab==='test')attachMedia();}}
+function refreshPreview() {const project=getProject();if(project&&$('#preview-content')){$('#preview-content').innerHTML=previewContent(project);if(ui.tab==='test')attachMedia();if(ui.tab==='flow')bindFlowEditor(project);}}
 function setTab(tab) {
   if(ui.tab==='code'&&!saveCode(false))return;
-  if(ui.tab==='test'&&tab!=='test')stopMedia();
+  if(ui.tab==='flow'&&tab!=='flow')document.getElementById('fx-props')?.dispatchEvent(new Event('change'));
   ui.tab=tab;ui.mobile='preview';render();
 }
 function openModal(title,body,footer='',wide=false) {
@@ -472,7 +525,7 @@ async function sendPrompt(text,projectId=currentId()) {
     if(!validation.valid)throw new Error('A sugestão retornou parâmetros inconsistentes. Seu projeto foi preservado; tente descrever o ajuste de outra forma.');
     const current=getProject(projectId);if(!current)return;
     if(current.localRevision!==requestRevision){ensureMessages(current).push({id:uid(),role:'assistant',text:'Você editou o projeto enquanto eu organizava a resposta. Mantive sua edição mais recente. Envie novamente o ajuste que deseja aplicar.',engine});save();return;}
-    current.name=candidate.name;current.description=candidate.description;current.configuration=candidate.configuration;
+    current.name=candidate.name;current.description=candidate.description;current.configuration=candidate.configuration;syncGraphFromConfiguration(current);
     const summary=String(result.summary||'Organizei as regras do seu analítico. Você pode ajustar os parâmetros ao lado.');
     ensureMessages(current).push({id:uid(),role:'assistant',text:summary+(result.needsClarification?`\n\n${String(result.needsClarification)}`:''),changes:Array.isArray(result.changes)?result.changes.map(String).slice(0,12):[],engine,createdAt:new Date().toISOString()});
     touch(current);
@@ -488,13 +541,13 @@ function saveCode(notify=true) {
     if(ui.codeFile==='config'){
       const configuration=JSON.parse(editor.value),candidate={...project,configuration};const result=validateProject(candidate);
       if(!result.valid)throw new Error(result.errors.join(' '));
-      checkpoint(project);project.configuration=configuration;
+      checkpoint(project);project.configuration=configuration;syncGraphFromConfiguration(project);
     }else{if(editor.value.length>32000)throw new Error('O código deve ter até 32 mil caracteres nesta versão.');checkpoint(project);project.customSource=editor.value;}
     touch(project);if(notify){toast('Alterações salvas.');render();}return true;
   }catch(error){toast(`Não foi possível salvar: ${error.message}`,'warning');return false;}
 }
 function projectPayload(project,history=true) {
-  const result={};for(const key of ['id','name','description','configuration','source','customSource','templateId','version','versions'])if(project[key]!==undefined)result[key]=structuredClone(project[key]);
+  const result={};for(const key of ['id','name','description','configuration','source','customSource','templateId','version','versions','flow','labCamera'])if(project[key]!==undefined)result[key]=structuredClone(project[key]);
   if(result.configuration)result.configuration.targetFps=clampTargetFps(result.configuration.targetFps);
   result.messages=history?(project.messages||[]).slice(-12).map(m=>({role:m.role,text:String(m.text).slice(0,3000),engine:m.engine,changes:Array.isArray(m.changes)?m.changes.slice(0,12).map(c=>String(c).slice(0,300)):[]})):[];
   return result;
@@ -532,7 +585,7 @@ async function useMerxCamera(deviceId,cameraId,name){
   const r=await api(`/merx/snapshot-image/${deviceId}/${cameraId}`);
   if(!r.image?.data){toast(r.reason==='offline'?t('merx.stateOffline'):t('merx.noSnapshot'));return;}
   let blob;try{const bin=atob(r.image.data),buf=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);blob=new Blob([buf],{type:r.image.contentType||'image/jpeg'});}catch{toast(t('merx.snapshotError'));return;} // in memory only
-  stopMedia();ui.sourceUrl=URL.createObjectURL(blob);ui.sourceType='image';ui.sourceMerx=true;ui.sourceName=`Merx · ${name}${r.online?'':' · '+t('merx.offline')}`;ui.events=[];ui.tab='test';ui.mobile='preview';
+  stopMedia();ui.sourceUrl=URL.createObjectURL(blob);ui.sourceType='image';ui.sourceMerx=true;ui.sourceName=`Merx · ${name}${r.online?'':' · '+t('merx.offline')}`;ui.events=[];ui.tab='test';ui.mobile='preview';const project=getProject();if(project){project.labCamera={deviceId,cameraId,name,kind:'merx'};const graph=project.flow?.schema===FLOW_SCHEMA?project.flow:ui.flowDraft?.[project.id];const cam=graph?.nodes.find(node=>node.type==='source.camera@1');if(cam&&project.flow)commitFlow(project,{op:'update_node',id:cam.id,props:{cameraId}});else if(cam)cam.props.cameraId=cameraId;}
   closeModal();render();toast(t('merx.snapshotLoaded'));
 }
 
@@ -651,8 +704,8 @@ async function startCamera() {
   try {
     const generation=lastRoute,mediaRequest=mediaGeneration;
     const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'environment'},audio:false});
-    if(lastRoute!==generation||mediaRequest!==mediaGeneration||ui.tab!=='test'){stream.getTracks().forEach(track=>track.stop());return;}
-    ui.stream=stream;ui.sourceType='camera';ui.sourceName='Câmera deste navegador';ui.events=[];refreshPreview();toast('Câmera conectada. Você pode desenhar a área e iniciar o teste.');
+    if(lastRoute!==generation||mediaRequest!==mediaGeneration){stream.getTracks().forEach(track=>track.stop());return;}
+    ui.stream=stream;ui.sourceType='camera';ui.sourceName='Câmera deste navegador';ui.events=[];const opened=getProject();if(opened)opened.labCamera={kind:'browser',name:ui.sourceName};if(ui.tab==='test')refreshPreview();toast('Câmera conectada. Você pode desenhar a área e iniciar o teste.');
   }catch(error){const messages={NotAllowedError:'O acesso à câmera não foi autorizado. Você pode permitir o acesso no navegador ou usar um vídeo.',NotFoundError:'Nenhuma câmera foi encontrada neste computador.',NotReadableError:'A câmera está ocupada ou indisponível. Feche o outro aplicativo e tente novamente.'};toast(messages[error.name]||'Não foi possível abrir a câmera. Use um vídeo ou tente novamente.','warning');}
 }
 async function loadVideoFile(file) {
@@ -709,7 +762,7 @@ function setupZoneDrawing() {
   const draft=end=>getProject().configuration.mode==='line_crossing'?{line:{start,end}}:{zone:{x:Math.min(start.x,end.x),y:Math.min(start.y,end.y),width:Math.abs(start.x-end.x),height:Math.abs(start.y-end.y)}};
   canvas.onpointerdown=event=>{if(!ui.drawZone)return;event.preventDefault();start=point(event);canvas.setPointerCapture(event.pointerId);};
   canvas.onpointermove=async event=>{if(!start)return;const v=await getVision();v.drawOverlay(canvas,sourceElement(),getProject().configuration,[],draft(point(event)));};
-  canvas.onpointerup=event=>{if(!start)return;const project=getProject(),change=draft(point(event));start=null;canvas.releasePointerCapture(event.pointerId);const candidate={...project,configuration:{...project.configuration,...change}},check=validateProject(candidate);if(check.valid){checkpoint(project);project.configuration=candidate.configuration;touch(project,{geometry:true});toast(change.line?'Linha atualizada.':'Área atualizada.');}else toast('Desenhe uma área maior ou uma linha com dois pontos diferentes.','warning');ui.drawZone=false;canvas.style.pointerEvents='none';fitMedia(sourceElement());};
+  canvas.onpointerup=event=>{if(!start)return;const project=getProject(),change=draft(point(event));start=null;canvas.releasePointerCapture(event.pointerId);const candidate={...project,configuration:{...project.configuration,...change}},check=validateProject(candidate);if(check.valid){checkpoint(project);project.configuration=candidate.configuration;syncGraphFromConfiguration(project);touch(project,{geometry:true});toast(change.line?'Linha atualizada.':'Área atualizada.');}else toast('Desenhe uma área maior ou uma linha com dois pontos diferentes.','warning');ui.drawZone=false;canvas.style.pointerEvents='none';fitMedia(sourceElement());};
   canvas.onpointercancel=()=>{start=null;};
 }
 
@@ -772,7 +825,15 @@ document.addEventListener('click',async event=>{
       case 'review-detail':reviewModal(ui.reviews?.find(item=>item.id===target.dataset.id));break;
       case 'license-open':closeModal();go('license');break;
       case 'merx-sync-save':case 'merx-sync-skip':{const items=action==='merx-sync-skip'?[]:[...document.querySelectorAll('#merx-sync-form input[name=sync]:checked')].map(i=>{const[deviceId,cameraId]=i.value.split('|');return{deviceId,cameraId};});const r=await api('/merx/synced-cameras','PUT',{items});ui.merxAccount={...ui.merxAccount,syncDecided:true,synced:r.synced};ui.merxDevices={...(ui.merxDevices||{}),synced:r.synced};toast(items.length?t('merx.synced',{n:items.length}):t('merx.skipped'));render();break;}
-      case 'merx-send-test':{const project=getProject();if(!project)break;target.disabled=true;const spec=buildTestPayload(project,{deviceId:target.dataset.device,cameraId:target.dataset.camera});const body=projectPayload(project,false);body.configuration.targetFps=spec.fps;const r=await api('/merx/tests','POST',{project:body,deviceId:spec.deviceId,cameraId:spec.cameraId,fps:spec.fps});ui.merxTest=r.test;toast(t('merx.queued'));render();break;}
+      case 'merx-send-test':{const project=getProject();if(!project)break;const gate=flowTestGate(project);if(!gate.ok){toast(t(gate.errors[0]?.key||'flow.testBlocked'),'warning');break;}target.disabled=true;const spec=buildTestPayload(project,{deviceId:target.dataset.device,cameraId:target.dataset.camera});const body=projectPayload(project,false);body.configuration.targetFps=spec.fps;const r=await api('/merx/tests','POST',{project:body,deviceId:spec.deviceId,cameraId:spec.cameraId,fps:spec.fps});ui.merxTest=r.test;toast(t('merx.queued'));render();break;}
+      case 'flow-undo':{const project=getProject();if(project&&!applyFlowHistory(project,'undo').error)refreshPreview();break;}
+      case 'flow-redo':{const project=getProject();if(project&&!applyFlowHistory(project,'redo').error)refreshPreview();break;}
+      case 'flow-zoom-in':{const project=getProject();if(!project)break;const view=flowViewFor(project.id);view.zoom=Math.min(1.8,view.zoom*1.12);refreshPreview();break;}
+      case 'flow-zoom-out':{const project=getProject();if(!project)break;const view=flowViewFor(project.id);view.zoom=Math.max(0.45,view.zoom/1.12);refreshPreview();break;}
+      case 'flow-fit':{const project=getProject();if(!project)break;const graph=workingGraph(project),view=flowViewFor(project.id);const maxX=Math.max(320,...graph.nodes.map(node=>node.ui.x+300)),maxY=Math.max(240,...graph.nodes.map(node=>node.ui.y+200));const stage=document.getElementById('fx-stage');view.zoom=Math.min(1,Math.max(0.45,Math.min(((stage?.clientWidth||640)-40)/maxX,((stage?.clientHeight||420)-40)/maxY)));view.panX=24;view.panY=16;refreshPreview();break;}
+      case 'flow-delete':{const project=getProject();const id=target.dataset.node;if(!project||!id)break;const result=commitFlow(project,{op:'remove_node',id});if(result.error){flowViewFor(project.id).notice=result.error;}else flowViewFor(project.id).selectedId=null;refreshPreview();break;}
+      case 'flow-restore':{const project=getProject();const id=target.dataset.node;if(!project||!id)break;const node=workingGraph(project).nodes.find(item=>item.id===id);if(!node)break;const props=blockDefaults(node.type);if(node.type==='detect.person@1')props.classNames=node.props.classNames;const result=commitFlow(project,{op:'update_node',id,props});if(result.error)flowViewFor(project.id).notice=result.error;refreshPreview();break;}
+      case 'flow-disconnect':{const project=getProject();const edgeId=target.dataset.edge;if(!project||!edgeId)break;const result=commitFlow(project,{op:'disconnect',edgeId});if(result.error)flowViewFor(project.id).notice=result.error;refreshPreview();break;}
       case 'merx-test-status':{const x=ui.merxTest;if(!x)break;const r=await api(`/merx/tests/${encodeURIComponent(x.deviceId)}/${encodeURIComponent(x.analyticId)}?requestId=${encodeURIComponent(x.requestId)}`);ui.merxTest={...x,device:r.device};render();break;}
       case 'license-checkout':{target.disabled=true;const result=await api('/license/checkout','POST',{});if(result.alreadyActive){ui.license=null;await refreshLicense();toast(result.message||'Você já possui uma licença ativa.');render();}else if(result.checkoutUrl)location.assign(result.checkoutUrl);break;}
       case 'license-refresh':{target.disabled=true;await refreshLicense(true);if(licenseObject()?.active)toast(t('toast.licenseActive'));else toast(t('toast.licenseNotYet'),'warning');break;}
@@ -804,7 +865,7 @@ document.addEventListener('submit',async event=>{
       const presets={full:{x:0,y:0,width:1,height:1},center:{x:.25,y:.15,width:.5,height:.7},left:{x:0,y:0,width:.5,height:1},right:{x:.5,y:0,width:.5,height:1}};
       if(presets[data.get('zonePreset')])configuration.zone=presets[data.get('zonePreset')];
       const validation=validateProject({...project,configuration});if(!validation.valid)throw new Error(validation.errors.join(' '));
-      checkpoint(project);project.configuration=configuration;ensureMessages(project).push({id:uid(),role:'assistant',text:'Atualizei o analítico com os ajustes que você fez no painel.',changes:[MODES[configuration.mode],`${configuration.classNames.map(c=>CLASSES[c]).join(', ')} · confiança ${Math.round(configuration.confidence*100)}%`],engine:'local'});const geometry=data.get('zonePreset')&&data.get('zonePreset')!=='current';touch(project,{geometry});stopTest();closeModal();render();toast('Regras atualizadas.');
+      checkpoint(project);project.configuration=configuration;syncGraphFromConfiguration(project);ensureMessages(project).push({id:uid(),role:'assistant',text:'Atualizei o analítico com os ajustes que você fez no painel.',changes:[MODES[configuration.mode],`${configuration.classNames.map(c=>CLASSES[c]).join(', ')} · confiança ${Math.round(configuration.confidence*100)}%`],engine:'local'});const geometry=data.get('zonePreset')&&data.get('zonePreset')!=='current';touch(project,{geometry});stopTest();closeModal();render();toast('Regras atualizadas.');
     }
     if(form.id==='publication-form')await submitPublication(form);
     if(form.id==='review-form'){const candidate=ui.reviews?.find(item=>item.id===form.dataset.id);if(!candidate)throw new Error('Atualize a fila antes de registrar o parecer.');await api(`/reviews/${encodeURIComponent(candidate.id)}`,'POST',{status:String(data.get('status')),notes:String(data.get('notes')),expectedRevision:candidate.reviewRevision,snapshotSha256:candidate.snapshotSha256});closeModal();await refreshReviews();toast('Parecer registrado sobre esta versão da proposta.');}
@@ -850,6 +911,10 @@ document.addEventListener('keydown',event=>{
     if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
   }
   if(['hero-prompt','chat-prompt'].includes(event.target.id)&&event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();event.target.closest('form').requestSubmit();}
+  const typing=event.target.closest?.('input,textarea,select');
+  if(route().name==='builder'&&ui.tab==='flow'&&!typing&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();const project=getProject();if(project&&!applyFlowHistory(project,event.shiftKey?'redo':'undo').error)refreshPreview();}
+  if(route().name==='builder'&&ui.tab==='flow'&&!typing&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='y'){event.preventDefault();const project=getProject();if(project&&!applyFlowHistory(project,'redo').error)refreshPreview();}
+  if(route().name==='builder'&&ui.tab==='flow'&&!typing&&(event.key==='Delete'||event.key==='Backspace')){const project=getProject(),id=project&&flowViewFor(project.id).selectedId;if(!project||!id)return;event.preventDefault();const result=commitFlow(project,{op:'remove_node',id});if(!result.error){flowViewFor(project.id).selectedId=null;refreshPreview();}}
 });
 $('#project-import').addEventListener('change',async event=>{
   const file=event.target.files[0];event.target.value='';if(!file)return;

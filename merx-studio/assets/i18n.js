@@ -1,3 +1,4 @@
+import { FLOW_I18N } from './flow-i18n.js';
 // Merx Studio i18n — vanilla dictionary, PT is the source/fallback language.
 // Pattern follows bemerx.com: EN | ES | PT switcher, key-based UI strings.
 // User content (project names, messages, code) is never translated here.
@@ -117,6 +118,8 @@ es: {
   'dir.both':'Ambos sentidos','dir.left_to_right':'Izquierda a derecha','dir.right_to_left':'Derecha a izquierda','dir.top_to_bottom':'Arriba hacia abajo','dir.bottom_to_top':'Abajo hacia arriba',
   'class.person':'Personas','class.car':'Autos','class.motorcycle':'Motos','class.bicycle':'Bicicletas','class.truck':'Camiones','class.bus':'Buses','class.dog':'Perros','class.cat':'Gatos','class.backpack':'Mochilas','class.handbag':'Bolsos','class.suitcase':'Maletas',
 }};
+
+for (const code of SUPPORTED_LOCALES) Object.assign(LOCALES[code], FLOW_I18N[code]);
 
 // Long-form content translations keyed by domain ids. PT falls back to the
 // original domain text, so missing entries degrade gracefully.
