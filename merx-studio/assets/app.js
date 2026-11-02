@@ -1,5 +1,5 @@
-import { CATALOG, TEMPLATES, DOCS, createProject, validateProject, buildManifest, generateRust, generateFlow, interpretPrompt, buildExecutableSpec } from './domain.js?v=20261021g';
-import { t, localeTag, getLocale, setLocale, initLocale, persistLocale, formatDate, formatPrice, contentFor, LOCALE_NAMES, SUPPORTED_LOCALES } from './i18n.js?v=20261021g';
+import { CATALOG, TEMPLATES, DOCS, createProject, validateProject, buildManifest, generateRust, generateFlow, interpretPrompt, buildExecutableSpec, clampTargetFps, displayStatus, statusTone, nextProjectStatus, showDwellField, triggerKey, loginArrival, buildTestPayload } from './domain.js?v=20261102a';
+import { t, localeTag, getLocale, setLocale, initLocale, persistLocale, formatDate, formatPrice, contentFor, LOCALE_NAMES, SUPPORTED_LOCALES } from './i18n.js?v=20261102a';
 initLocale(localStorage, globalThis.navigator?.language);
 const localeLabel = () => LOCALE_NAMES[getLocale()];
 
@@ -93,7 +93,7 @@ function getProject(id = currentId()) {return workspace.projects.find(p=>p.id===
 function currentId() {return route().parts[1] || null;}
 function route() {const raw=decodeURIComponent(location.hash.replace(/^#\/?/,''));const [pathPart,queryPart='']=raw.split('?');const parts=pathPart.split('/').filter(Boolean);return {name:parts[0]||'home',parts,query:new URLSearchParams(queryPart)};}
 function go(path) {location.hash='/'+path;}
-function touch(project) {project.localRevision=(project.localRevision||0)+1;if(ui.runContext?.projectId===project.id&&JSON.stringify(ui.runContext.configuration)!==JSON.stringify(project.configuration)){stopTest();ui.events=[];ui.detections=[];ui.runContext=null;ui.testResult=null;}project.updatedAt=new Date().toISOString();project.source=generateRust(project);project.status=project.status==='submitted'?'draft':project.status;save();}
+function touch(project, options={}) {project.localRevision=(project.localRevision||0)+1;if(ui.runContext?.projectId===project.id&&JSON.stringify(ui.runContext.configuration)!==JSON.stringify(project.configuration)){stopTest();ui.events=[];ui.detections=[];ui.runContext=null;ui.testResult=null;}project.updatedAt=new Date().toISOString();project.source=generateRust(project);project.status=nextProjectStatus(project, options);save();}
 function checkpoint(project) {const list=ui.undo[project.id] ||= [];list.push(structuredClone(project));if(list.length>20)list.shift();}
 function toast(message,tone='success') {const node=document.createElement('div');node.className=`toast ${tone}`;node.innerHTML=`${icon(tone==='success'?'checkCircle':'info',18)}<span>${esc(message)}</span>`;$('#toast-root').append(node);setTimeout(()=>node.remove(),5000);}
 function download(name,content,type='application/json') {const url=URL.createObjectURL(new Blob([content],{type}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
@@ -108,7 +108,8 @@ function newProject(prompt='',templateId) {
   if(prompt)setTimeout(()=>sendPrompt(prompt,project.id),0);
   return project;
 }
-function statusText(project) {const pub=project.publicationStatus||project.submission?.publicationStatus;if(pub==='published')return t('status.published');return project.status==='submitted'?t('status.submitted'):project.status==='approved'?t('status.approved'):project.status==='changes_requested'?t('status.changes_requested'):project.status==='rejected'?t('status.rejected'):t('status.draft')||'Rascunho';}
+function statusText(project) {const key=displayStatus(project);return t('status.'+key)||key;}
+function statusBadge(project) {const key=displayStatus(project);return badge(statusText(project), statusTone(key));}
 
 function header(active='home',compact=false) {
   return `<header class="site-header"><a href="#/" class="brand" aria-label="Merx Studio — início">${mark()}<span class="brand-name">Merx <span>Studio</span><i class="brand-dot">.</i></span></a>
@@ -147,7 +148,7 @@ function home() {
 }
 
 function projectCard(project) {
-  return `<article class="project-card"><a href="#/builder/${esc(project.id)}" class="project-card-main"><div class="row"><span class="project-icon">${icon(project.configuration.mode==='dwell'?'clock':project.configuration.mode==='line_crossing'?'crossing':'target',22)}</span>${badge(statusText(project),project.status==='submitted'?'blue':'draft')}</div><h3>${esc(project.name)}</h3><p>${esc(project.description||'Abra o construtor e descreva o que deseja observar.')}</p><div class="project-card-footer"><span>Alterado ${fmt(project.updatedAt)}</span>${icon('arrowRight',17)}</div></a><button class="project-menu" data-action="project-options" data-id="${esc(project.id)}" aria-label="Opções de ${esc(project.name)}">${icon('more',18)}</button></article>`;
+  return `<article class="project-card"><a href="#/builder/${esc(project.id)}" class="project-card-main"><div class="row"><span class="project-icon">${icon(project.configuration.mode==='dwell'?'clock':project.configuration.mode==='line_crossing'?'crossing':'target',22)}</span>${statusBadge(project)}</div><h3>${esc(project.name)}</h3><p>${esc(project.description||'Abra o construtor e descreva o que deseja observar.')}</p><div class="project-card-footer"><span>Alterado ${fmt(project.updatedAt)}</span>${icon('arrowRight',17)}</div></a><button class="project-menu" data-action="project-options" data-id="${esc(project.id)}" aria-label="Opções de ${esc(project.name)}">${icon('more',18)}</button></article>`;
 }
 function workspaceNav(active) {
   return `<aside class="sidebar"><div class="sidebar-nav"><span class="nav-label">WORKSPACE</span>${[['projects','Meus projetos','folder'],['lab','Laboratório','lab'],['submissions','Publicações','shield'],['store','Merx Store','store'],['docs','Documentação','book']].map(([path,label,ico])=>`<a class="nav-item ${active===path?'active':''}" href="#/${path}">${icon(ico,18)}${label}</a>`).join('')}</div><div class="sidebar-bottom"><span class="workspace-avatar">M</span><div><strong>Meu workspace</strong><small>${ui.auth?'Conectado à sua conta':'Rascunhos locais'}</small></div></div></aside>`;
@@ -166,14 +167,16 @@ function messagesHtml(project) {
 }
 function builderPage(project) {
   if(!project)return notFound();
-  return `${header('builder',true)}<main class="builder" id="main-content"><div class="builder-header"><div class="builder-title-area"><a href="#/projects" class="back-button" aria-label="${t('builder.back')}">${icon('chevron',17)}</a><div><button class="builder-project-title" data-action="rename-project">${esc(project.name)}${icon('down',14)}</button><span class="save-indicator">${ui.storageError?t('builder.notSaved'):`${icon('check',12)} ${t('builder.saved')}`}</span></div>${badge(statusText(project),project.status==='submitted'?'blue':'draft')}</div><div class="builder-header-actions">${button('','undo','ghost icon-btn','undo','aria-label="Desfazer última alteração" '+(!ui.undo[project.id]?.length?'disabled':''))}${ui.auth?button('Salvar na conta','cloud-save','secondary small','cloud'):''}${button('Exportar','export-project','secondary small','download')}${button('Publicar','publish-tab','primary small','upload')}</div></div>
+  return `${header('builder',true)}<main class="builder" id="main-content"><div class="builder-header"><div class="builder-title-area"><a href="#/projects" class="back-button" aria-label="${t('builder.back')}">${icon('chevron',17)}</a><div><button class="builder-project-title" data-action="rename-project">${esc(project.name)}${icon('down',14)}</button><span class="save-indicator">${ui.storageError?t('builder.notSaved'):`${icon('check',12)} ${t('builder.saved')}`}</span></div>${statusBadge(project)}</div><div class="builder-header-actions">${button('','undo','ghost icon-btn','undo','aria-label="Desfazer última alteração" '+(!ui.undo[project.id]?.length?'disabled':''))}${ui.auth?button('Salvar na conta','cloud-save','secondary small','cloud'):''}${button('Exportar','export-project','secondary small','download')}${button('Publicar','publish-tab','primary small','upload')}</div></div>
     <div class="mobile-builder-tabs" role="tablist" aria-label="Área do construtor"><button data-action="mobile-chat" class="${ui.mobile==='chat'?'active':''}" role="tab" aria-selected="${ui.mobile==='chat'}">${icon('chat',16)} ${t('builder.conversar')}</button><button data-action="mobile-preview" class="${ui.mobile==='preview'?'active':''}" role="tab" aria-selected="${ui.mobile==='preview'}">${icon('grid',16)} ${t('builder.tab.analytic')}</button></div>
     <div class="builder-layout" data-mobile-view="${ui.mobile}"><section class="chat-panel" aria-label="Conversa com o construtor"><div class="chat-header"><div>${icon('spark',17)}<strong>${t('builder.chatTitle')}</strong></div><span class="chat-mode-dot" title="${ui.auth&&ui.config.apiBase?'Assistente conectado':'Assistente de configuração local'}"></span></div><div class="chat-messages" id="chat-messages" aria-live="polite" aria-relevant="additions">${messagesHtml(project)}${ui.thinking&&ui.busyProject===project.id?`<div class="assistant-thinking">${mark(true)}<span>Organizando seu analítico<i></i><i></i><i></i></span></div>`:''}</div><div class="chat-bottom"><div class="context-strip">${icon('folder',13)} <span>${esc(project.name)}</span><span>·</span><span>v${esc(project.version||'0.1.0')}</span></div>${promptForm('chat')}<p class="composer-hint">Enter para enviar · Shift + Enter para nova linha</p></div></section>
     <section class="preview-panel" aria-label="Construtor do analítico"><nav class="preview-tabs" role="tablist" aria-label="Etapas do analítico">${[['analytic',t('builder.tab.analytic'),'grid'],['flow',t('builder.tab.flow'),'flow'],['code',t('builder.tab.code'),'code'],['test',t('builder.tab.test'),'play'],['publish',t('builder.tab.publish'),'store']].map(([id,label,ico])=>`<button class="tab ${ui.tab===id?'active':''}" data-action="builder-tab" data-tab="${id}" role="tab" aria-selected="${ui.tab===id}">${icon(ico,16)}${label}</button>`).join('')}</nav><div class="preview-content" id="preview-content">${previewContent(project)}</div></section></div></main>`;
 }
 function previewContent(project) {return ui.tab==='flow'?flowPanel(project):ui.tab==='code'?codePanel(project):ui.tab==='test'?testPanel(project):ui.tab==='publish'?publishPanel(project):analyticPanel(project);}
 function configLabels(project) {
-  const c=project.configuration;return {kind:MODES[c.mode]||'Regra personalizada',classes:(c.classNames||['person']).map(c=>CLASSES[c]||c).join(', '),confidence:Math.round(c.confidence*100)+'%',duration:c.mode==='dwell'?`${c.minDurationSeconds} segundos`:'Ao detectar presença',cooldown:`${c.cooldownSeconds} segundos`};
+  const c=project.configuration;
+  const duration=c.mode==='dwell'?t('rule.whenDwell',{n:c.minDurationSeconds}):t(triggerKey(c.mode));
+  return {kind:MODES[c.mode]||'Regra personalizada',classes:(c.classNames||['person']).map(name=>CLASSES[name]||name).join(', '),confidence:Math.round(c.confidence*100)+'%',duration,showDwell:showDwellField(c.mode),cooldown:`${c.cooldownSeconds} segundos`};
 }
 const VEHICLE_CLASSES=['car','truck','bus','motorcycle','bicycle'];
 function overlaySvg(c,zx,zy,zw,zh){
@@ -231,7 +234,7 @@ function codePanel(project) {
 
 
 // --- Merx pairing (same verified e-mail as the App) ---
-async function checkMerxAccount(){if(!ui.auth||!ui.config.apiBase)return;try{ui.merxAccount=await api('/merx/account');if(ui.merxAccount.linked&&!ui.merxAccountToasted){ui.merxAccountToasted=true;toast(t('merx.recognized',{n:ui.merxAccount.deviceCount}));if(!licenseObject()?.active&&route().name!=='license')go('license');}}catch{ui.merxAccount={linked:false};}render();}
+async function checkMerxAccount(){if(!ui.auth||!ui.config.apiBase)return;try{ui.merxAccount=await api('/merx/account');if(ui.merxAccount.linked&&!ui.merxAccountToasted){ui.merxAccountToasted=true;toast(t('merx.recognized',{n:ui.merxAccount.deviceCount}));if(ui.license&&!ui.licenseLoading&&!licenseObject()?.active&&route().name!=='license')go('license');}}catch{ui.merxAccount={linked:false};}render();}
 async function loadMerxDevices(){if(ui.merxLoading)return;ui.merxLoading=true;try{ui.merxDevices=await api('/merx/devices');}catch(e){ui.merxDevices={error:e.message,devices:[]};}finally{ui.merxLoading=false;render();}}
 function merxSyncStep(){const d=ui.merxDevices;if(!d){queueMicrotask(loadMerxDevices);return `<div class="card"><div class="card-body"><p>${t('merx.loading')}</p></div></div>`;}
   queueMicrotask(()=>fillMerxThumbs(document.getElementById('merx-sync-form')||document));
@@ -307,15 +310,24 @@ function licensePage(){
   const errorNotice=lic.error?`<div class="notice"><span>${icon('info',17)}</span><div><strong>${t('license.errorT')}</strong><p>${esc(lic.error)}</p></div></div>`:'';
   return pageShell('license',`${pageHeading(t('license.eyebrow'),t('license.neededTitle'),t('license.neededSub'))}${ui.merxAccount?.linked?`<div class="notice success">${icon('checkCircle',19)}<div><strong>${t('merx.recognizedT')}</strong><p>${t('merx.recognized',{n:ui.merxAccount.deviceCount})}</p></div></div>`:''}${returnNotice}${errorNotice}<div class="empty-state">${icon('lock',32)}<h2>${formatPrice(89.9)}${t('license.priceLaunch')}</h2><p>${t('license.priceBody',{price:formatPrice(119.9)})}</p>${pay.checkoutAvailable?button(t('license.subscribe'),'license-checkout','primary','arrowRight'):`<p><strong>${t('license.unavailable')}</strong> ${t('license.unavailableBody')}</p>`}<div class="row">${button(t('license.recheck'),'license-refresh','secondary','refresh')}</div></div>`);
 }
+let licenseRequest=null;
 async function refreshLicense(reconcile=false){
-  if(!ui.auth||ui.licenseLoading)return;
+  if(!ui.auth)return null;
+  if(licenseRequest&&!reconcile)return licenseRequest;
+  if(licenseRequest&&reconcile)await licenseRequest;
   ui.licenseLoading=true;
-  try{
-    if(reconcile){try{ui.license=await api('/license/reconcile','POST',{});}catch{ui.license=await api('/license');}}
-    else ui.license=await api('/license');
-  }
-  catch(error){ui.license={license:{status:'unknown',active:false,payments:{configured:false},error:error.message}};}
-  finally{ui.licenseLoading=false;render();}
+  const run=(async()=>{
+    try{
+      if(reconcile){try{ui.license=await api('/license/reconcile','POST',{});}catch{ui.license=await api('/license');}}
+      else ui.license=await api('/license');
+    }
+    catch(error){ui.license={license:{status:'unknown',active:false,payments:{configured:false},error:error.message}};}
+    finally{ui.licenseLoading=false;if(licenseRequest===run)licenseRequest=null;}
+    render();
+    return ui.license;
+  })();
+  licenseRequest=run;
+  return run;
 }
 async function pollLicenseAfterCheckout(){
   for(let attempt=0;attempt<6;attempt++){
@@ -344,7 +356,7 @@ function reviewQueuePage() {
   if(!ui.auth)return pageShell('reviews',`${pageHeading(t('reviews.eyebrow'),t('reviews.title'),'Analíticos enviados para avaliação da equipe.')}<div class="empty-state">${icon('lock',32)}<h2>${t('reviews.signinH')}</h2><p>O acesso à fila é reservado à equipe de revisão Merx.</p>${button(t('header.signin'),'login','primary','arrowRight')}</div>`);
   if(!isReviewer())return pageShell('reviews',`${pageHeading('EQUIPE MERX','Central de revisão','Este espaço exige uma conta com acesso de revisor.')}<div class="empty-state">${icon('shield',32)}<h2>${t('reviews.reservedH')}</h2><p>Você pode acompanhar seus próprios envios na página de publicações.</p><a href="#/submissions" class="btn primary">Minhas publicações</a></div>`);
   const reviews=ui.reviews||[];
-  return pageShell('reviews',`${pageHeading('EQUIPE MERX','Central de revisão','Avalie a proposta, registre o parecer e preserve o histórico.',button(t('reviews.refresh'),'refresh-reviews','secondary','refresh'))}<div class="notice">${icon('info',18)}<div><strong>Revisão da proposta de configuração</strong><p>Aprovar publica o analítico no catálogo da Merx Store (com o preço definido pelo autor), mas não o torna instalável nem vendável nesta etapa. A qualificação do modelo e da aceleração Merx precisa de evidências de execução no Merx.</p></div></div>${reviews.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Analítico</th><th>Versão</th><th>Status</th><th>Enviado</th><th></th></tr></thead><tbody>${reviews.map(item=>`<tr><td><strong>${esc(item.name)}</strong><small>${esc(item.id)}</small></td><td>${esc(item.version)}</td><td>${badge(statusText(item),item.status==='submitted'?'blue':'draft')}</td><td>${fmt(item.createdAt)}</td><td>${button('Revisar','review-detail','secondary small','shield',`data-id="${esc(item.id)}"`)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty-state"><span class="empty-icon">${icon('shield',30)}</span><h2>${ui.reviewsLoading?'Carregando a fila…':'Nenhuma proposta carregada.'}</h2><p>${esc(ui.reviewsError||'Atualize a fila para consultar os candidatos enviados.')}</p>${button('Consultar fila','refresh-reviews','primary','refresh')}</div>`}`);
+  return pageShell('reviews',`${pageHeading('EQUIPE MERX','Central de revisão','Avalie a proposta, registre o parecer e preserve o histórico.',button(t('reviews.refresh'),'refresh-reviews','secondary','refresh'))}<div class="notice">${icon('info',18)}<div><strong>Revisão da proposta de configuração</strong><p>Aprovar publica o analítico no catálogo da Merx Store (com o preço definido pelo autor), mas não o torna instalável nem vendável nesta etapa. A qualificação do modelo e da aceleração Merx precisa de evidências de execução no Merx.</p></div></div>${reviews.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Analítico</th><th>Versão</th><th>Status</th><th>Enviado</th><th></th></tr></thead><tbody>${reviews.map(item=>`<tr><td><strong>${esc(item.name)}</strong><small>${esc(item.id)}</small></td><td>${esc(item.version)}</td><td>${statusBadge(item)}</td><td>${fmt(item.createdAt)}</td><td>${button('Revisar','review-detail','secondary small','shield',`data-id="${esc(item.id)}"`)}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty-state"><span class="empty-icon">${icon('shield',30)}</span><h2>${ui.reviewsLoading?'Carregando a fila…':'Nenhuma proposta carregada.'}</h2><p>${esc(ui.reviewsError||'Atualize a fila para consultar os candidatos enviados.')}</p>${button('Consultar fila','refresh-reviews','primary','refresh')}</div>`}`);
 }
 async function refreshReviews(){
   if(!isReviewer())return;
@@ -420,7 +432,7 @@ function closeModal() {$('#modal-root').innerHTML='';ui.modal=null;document.body
 function formError(form,message) {let error=$('.form-error',form);if(!error){error=document.createElement('div');error.className='form-error';error.setAttribute('role','alert');form.append(error);}error.textContent=message;}
 function configModal(project) {
   const c=project.configuration;
-  openModal(t('config.title'),`<form id="config-form"><p class="modal-intro">Altere os parâmetros diretamente. O fluxo, a prévia e o código gerado acompanham suas escolhas.</p><div class="form-grid"><label class="field full-width"><span>Tipo de observação</span><select class="select" name="mode">${Object.entries(MODES).map(([key,value])=>`<option value="${key}" ${c.mode===key?'selected':''}>${value}</option>`).join('')}</select></label><fieldset class="class-fieldset full-width"><legend>O que identificar</legend><div class="class-choices">${Object.entries(CLASSES).map(([key,value])=>`<label class="class-choice"><input type="checkbox" name="classes" value="${key}" ${(c.classNames||[]).includes(key)?'checked':''}><span>${value}</span></label>`).join('')}</div></fieldset><label class="field full-width"><span>Confiança mínima <strong id="confidence-value">${Math.round(c.confidence*100)}%</strong></span><input type="range" min="10" max="99" step="1" name="confidence" value="${Math.round(c.confidence*100)}" aria-label="Confiança mínima"><small class="help">Um limite maior exige mais confiança do detector.</small></label><label class="field"><span>Permanência mínima (s)</span><input type="number" class="input" name="minDurationSeconds" min="1" max="86400" step="0.1" required value="${c.minDurationSeconds}"><small class="help">Usada na regra de permanência.</small></label><label class="field"><span>Intervalo entre eventos (s)</span><input type="number" class="input" name="cooldownSeconds" min="0" max="86400" step="1" required value="${c.cooldownSeconds}"></label><label class="field"><span>Frames para confirmar</span><input type="number" class="input" name="minFrames" min="1" max="60" required value="${c.minFrames}"></label><label class="field"><span>Frequência solicitada (FPS)</span><input type="number" class="input" name="targetFps" min="1" max="30" required value="${c.targetFps}"></label><label class="field"><span>Área de interesse</span><select class="select" name="zonePreset"><option value="current">${t('config.zone.current')}</option><option value="full">${t('config.zone.full')}</option><option value="center">${t('config.zone.center')}</option><option value="left">${t('config.zone.left')}</option><option value="right">${t('config.zone.right')}</option></select></label><label class="field"><span>Direção do cruzamento</span><select class="select" name="direction">${[['both','Nos dois sentidos'],['left_to_right','Esquerda para direita'],['right_to_left','Direita para esquerda'],['top_to_bottom','Cima para baixo'],['bottom_to_top','Baixo para cima']].map(([key,value])=>`<option value="${key}" ${c.direction===key?'selected':''}>${value}</option>`).join('')}</select></label></div><div class="form-actions">${button('Cancelar','close-modal','secondary','','type="button"')}<button class="btn primary" type="submit">${icon('check',17)} Aplicar alterações</button></div></form>`,'',true);
+  openModal(t('config.title'),`<form id="config-form"><p class="modal-intro">Altere os parâmetros diretamente. O fluxo, a prévia e o código gerado acompanham suas escolhas.</p><div class="form-grid"><label class="field full-width"><span>Tipo de observação</span><select class="select" name="mode">${Object.entries(MODES).map(([key,value])=>`<option value="${key}" ${c.mode===key?'selected':''}>${value}</option>`).join('')}</select></label><fieldset class="class-fieldset full-width"><legend>O que identificar</legend><div class="class-choices">${Object.entries(CLASSES).map(([key,value])=>`<label class="class-choice"><input type="checkbox" name="classes" value="${key}" ${(c.classNames||[]).includes(key)?'checked':''}><span>${value}</span></label>`).join('')}</div></fieldset><label class="field full-width"><span>Confiança mínima <strong id="confidence-value">${Math.round(c.confidence*100)}%</strong></span><input type="range" min="10" max="99" step="1" name="confidence" value="${Math.round(c.confidence*100)}" aria-label="Confiança mínima"><small class="help">Um limite maior exige mais confiança do detector.</small></label><label class="field" data-dwell-field ${showDwellField(c.mode)?'':'hidden'}><span>${t('config.dwell')}</span><input type="number" class="input" name="minDurationSeconds" min="1" max="86400" step="0.1" ${showDwellField(c.mode)?'required':''} value="${c.minDurationSeconds}"><small class="help">${t('config.dwellHint')}</small></label><label class="field"><span>Intervalo entre eventos (s)</span><input type="number" class="input" name="cooldownSeconds" min="0" max="86400" step="1" required value="${c.cooldownSeconds}"></label><label class="field"><span>Frames para confirmar</span><input type="number" class="input" name="minFrames" min="1" max="60" required value="${c.minFrames}"></label><label class="field"><span>${t('config.fps')}</span><input type="number" class="input" name="targetFps" min="1" max="10" step="1" required value="${clampTargetFps(c.targetFps)}"><small class="help">${t('config.fpsHint')}</small></label><label class="field"><span>Área de interesse</span><select class="select" name="zonePreset"><option value="current">${t('config.zone.current')}</option><option value="full">${t('config.zone.full')}</option><option value="center">${t('config.zone.center')}</option><option value="left">${t('config.zone.left')}</option><option value="right">${t('config.zone.right')}</option></select></label><label class="field"><span>Direção do cruzamento</span><select class="select" name="direction">${[['both','Nos dois sentidos'],['left_to_right','Esquerda para direita'],['right_to_left','Direita para esquerda'],['top_to_bottom','Cima para baixo'],['bottom_to_top','Baixo para cima']].map(([key,value])=>`<option value="${key}" ${c.direction===key?'selected':''}>${value}</option>`).join('')}</select></label></div><div class="form-actions">${button('Cancelar','close-modal','secondary','','type="button"')}<button class="btn primary" type="submit">${icon('check',17)} Aplicar alterações</button></div></form>`,'',true);
 }
 function projectOptions(project) {
   openModal(esc(project.name),`<div class="project-option-list">${button('Abrir no construtor','open-project','ghost','code',`data-id="${esc(project.id)}"`)}${button('Duplicar projeto','duplicate-project','ghost','copy',`data-id="${esc(project.id)}"`)}${button('Exportar arquivo do projeto','export-project','ghost','download',`data-id="${esc(project.id)}"`)}${button('Remover deste navegador','confirm-delete','ghost danger','trash',`data-id="${esc(project.id)}"`)}</div>`);
@@ -483,6 +495,7 @@ function saveCode(notify=true) {
 }
 function projectPayload(project,history=true) {
   const result={};for(const key of ['id','name','description','configuration','source','customSource','templateId','version','versions'])if(project[key]!==undefined)result[key]=structuredClone(project[key]);
+  if(result.configuration)result.configuration.targetFps=clampTargetFps(result.configuration.targetFps);
   result.messages=history?(project.messages||[]).slice(-12).map(m=>({role:m.role,text:String(m.text).slice(0,3000),engine:m.engine,changes:Array.isArray(m.changes)?m.changes.slice(0,12).map(c=>String(c).slice(0,300)):[]})):[];
   return result;
 }
@@ -563,13 +576,15 @@ async function cloudSave(project) {
   let result;try {result=await api(`/projects/${encodeURIComponent(project.id)}`,'PUT',{project:clean,expectedRevision:project.cloudOwner===ui.auth.sub?(project.cloudRevision||0):0});} catch(error){if(error.status===409){openModal('Existe uma versão mais recente',`<p>Este projeto mudou na sua conta. Preserve sua edição como uma cópia local e carregue a versão atual antes de continuar.</p>`,button('Cancelar','close-modal','secondary')+button('Preservar cópia e carregar','resolve-conflict','primary','copy',`data-id="${esc(project.id)}"`));return false;}throw error;}
   project.cloudRevision=result.revision||result.project?.revision;project.cloudOwner=ui.auth.sub;project.syncedAt=new Date().toISOString();save();toast('Projeto salvo na sua conta.');return true;
 }
-async function loadCloudProjects() {
-  if(!ui.auth){loginModal();return;}
+async function loadCloudProjects({quiet=false}={}) {
+  if(!ui.auth){if(!quiet)loginModal();return {count:0};}
   let data=await api('/projects'),count=0;const all=[...(data.projects||[])];
   let pages=0;
   while(data.nextCursor&&pages<20){data=await api('/projects?'+new URLSearchParams({cursor:data.nextCursor}));all.push(...(data.projects||[]));pages++;}
-  for(const remote of all){const p=remote.project||remote;const local=getProject(p.id);if(!p.id||!p.configuration)continue;const valid=validateProject(p);if(!valid.valid)continue;if(!local){persistProject({...p,cloudRevision:remote.revision||p.revision,cloudOwner:ui.auth.sub,syncedAt:new Date().toISOString()});count++;}else if(!local.cloudRevision){local.cloudRevision=remote.revision||p.revision;local.cloudOwner=ui.auth.sub;save();}}
-  toast(count?`${count} projeto${count===1?'':'s'} da conta carregado${count===1?'':'s'}.`:'Seus rascunhos locais foram preservados. Nenhum novo projeto na conta.');render();
+  for(const remote of all){const p=remote.project||remote;const local=getProject(p.id);if(!p.id||!p.configuration)continue;p.configuration.targetFps=clampTargetFps(p.configuration.targetFps);const valid=validateProject(p);if(!valid.valid)continue;if(!local){persistProject({...p,cloudRevision:remote.revision||p.revision,cloudOwner:ui.auth.sub,syncedAt:new Date().toISOString()});count++;}else if(!local.cloudRevision){local.cloudRevision=remote.revision||p.revision;local.cloudOwner=ui.auth.sub;if(local.configuration)local.configuration.targetFps=clampTargetFps(local.configuration.targetFps);save();}}
+  if(!quiet)toast(count?`${count} projeto${count===1?'':'s'} da conta carregado${count===1?'':'s'}.`:'Seus rascunhos locais foram preservados. Nenhum novo projeto na conta.');
+  render();
+  return {count};
 }
 export const PLATFORM_FEE_BPS=989; // 9,89% — single source in the client; server enforces the same constant.
 export function creatorNetMinor(amountMinor){return Math.max(0,amountMinor-Math.round(amountMinor*PLATFORM_FEE_BPS/10000));}
@@ -605,7 +620,7 @@ async function submitPublication(form) {
 }
 
 let visionModule,loopTimer,runGeneration=0,mediaGeneration=0;
-async function getVision(){return visionModule ||= await import('./vision.js?v=20261021g');}
+async function getVision(){return visionModule ||= await import('./vision.js?v=20261102a');}
 function sourceElement(){return $('#lab-video')||$('#lab-image');}
 function stopTest() {
   ui.running=false;runGeneration++;clearTimeout(loopTimer);
@@ -679,7 +694,7 @@ async function startTest() {
         if($('#lab-run-status'))$('#lab-run-status').textContent=currentSource.tagName==='IMG'?'Detecção concluída nesta imagem':'Teste em execução · navegador';
         if(result.events.length){$('#event-list').innerHTML=eventsHtml();$('[data-action="export-events"]')?.removeAttribute('disabled');}
         if(currentSource.tagName==='IMG'){stopTest();if($('#lab-run-status'))$('#lab-run-status').textContent='Detecção concluída · imagem estática';return;}
-        loopTimer=setTimeout(run,Math.max(30,1000/project.configuration.targetFps-inferenceMs));
+        loopTimer=setTimeout(run,Math.max(30,1000/clampTargetFps(project.configuration.targetFps)-inferenceMs));
       }catch(error){stopTest();toast(`O teste foi interrompido: ${error.message}`,'warning');}
     };
     if(runButton){runButton.innerHTML=icon('stop',17)+'Parar teste';runButton.classList.remove('primary');runButton.classList.add('secondary');}run();
@@ -694,7 +709,7 @@ function setupZoneDrawing() {
   const draft=end=>getProject().configuration.mode==='line_crossing'?{line:{start,end}}:{zone:{x:Math.min(start.x,end.x),y:Math.min(start.y,end.y),width:Math.abs(start.x-end.x),height:Math.abs(start.y-end.y)}};
   canvas.onpointerdown=event=>{if(!ui.drawZone)return;event.preventDefault();start=point(event);canvas.setPointerCapture(event.pointerId);};
   canvas.onpointermove=async event=>{if(!start)return;const v=await getVision();v.drawOverlay(canvas,sourceElement(),getProject().configuration,[],draft(point(event)));};
-  canvas.onpointerup=event=>{if(!start)return;const project=getProject(),change=draft(point(event));start=null;canvas.releasePointerCapture(event.pointerId);const candidate={...project,configuration:{...project.configuration,...change}},check=validateProject(candidate);if(check.valid){checkpoint(project);project.configuration=candidate.configuration;touch(project);toast(change.line?'Linha atualizada.':'Área atualizada.');}else toast('Desenhe uma área maior ou uma linha com dois pontos diferentes.','warning');ui.drawZone=false;canvas.style.pointerEvents='none';fitMedia(sourceElement());};
+  canvas.onpointerup=event=>{if(!start)return;const project=getProject(),change=draft(point(event));start=null;canvas.releasePointerCapture(event.pointerId);const candidate={...project,configuration:{...project.configuration,...change}},check=validateProject(candidate);if(check.valid){checkpoint(project);project.configuration=candidate.configuration;touch(project,{geometry:true});toast(change.line?'Linha atualizada.':'Área atualizada.');}else toast('Desenhe uma área maior ou uma linha com dois pontos diferentes.','warning');ui.drawZone=false;canvas.style.pointerEvents='none';fitMedia(sourceElement());};
   canvas.onpointercancel=()=>{start=null;};
 }
 
@@ -757,7 +772,7 @@ document.addEventListener('click',async event=>{
       case 'review-detail':reviewModal(ui.reviews?.find(item=>item.id===target.dataset.id));break;
       case 'license-open':closeModal();go('license');break;
       case 'merx-sync-save':case 'merx-sync-skip':{const items=action==='merx-sync-skip'?[]:[...document.querySelectorAll('#merx-sync-form input[name=sync]:checked')].map(i=>{const[deviceId,cameraId]=i.value.split('|');return{deviceId,cameraId};});const r=await api('/merx/synced-cameras','PUT',{items});ui.merxAccount={...ui.merxAccount,syncDecided:true,synced:r.synced};ui.merxDevices={...(ui.merxDevices||{}),synced:r.synced};toast(items.length?t('merx.synced',{n:items.length}):t('merx.skipped'));render();break;}
-      case 'merx-send-test':{const project=getProject();if(!project)break;target.disabled=true;const r=await api('/merx/tests','POST',{project:projectPayload(project,false),deviceId:target.dataset.device,cameraId:target.dataset.camera});ui.merxTest=r.test;toast(t('merx.queued'));render();break;}
+      case 'merx-send-test':{const project=getProject();if(!project)break;target.disabled=true;const spec=buildTestPayload(project,{deviceId:target.dataset.device,cameraId:target.dataset.camera});const body=projectPayload(project,false);body.configuration.targetFps=spec.fps;const r=await api('/merx/tests','POST',{project:body,deviceId:spec.deviceId,cameraId:spec.cameraId,fps:spec.fps});ui.merxTest=r.test;toast(t('merx.queued'));render();break;}
       case 'merx-test-status':{const x=ui.merxTest;if(!x)break;const r=await api(`/merx/tests/${encodeURIComponent(x.deviceId)}/${encodeURIComponent(x.analyticId)}?requestId=${encodeURIComponent(x.requestId)}`);ui.merxTest={...x,device:r.device};render();break;}
       case 'license-checkout':{target.disabled=true;const result=await api('/license/checkout','POST',{});if(result.alreadyActive){ui.license=null;await refreshLicense();toast(result.message||'Você já possui uma licença ativa.');render();}else if(result.checkoutUrl)location.assign(result.checkoutUrl);break;}
       case 'license-refresh':{target.disabled=true;await refreshLicense(true);if(licenseObject()?.active)toast(t('toast.licenseActive'));else toast(t('toast.licenseNotYet'),'warning');break;}
@@ -783,12 +798,13 @@ document.addEventListener('submit',async event=>{
     if(form.id==='config-form'){
       const project=getProject(),configuration=structuredClone(project.configuration);
       for(const key of ['mode','direction'])configuration[key]=String(data.get(key));
-      for(const key of ['minDurationSeconds','cooldownSeconds','minFrames','targetFps'])configuration[key]=Number(data.get(key));
+      for(const key of ['minDurationSeconds','cooldownSeconds','minFrames'])configuration[key]=Number(data.get(key));
+      configuration.targetFps=clampTargetFps(data.get('targetFps'));
       configuration.confidence=Number(data.get('confidence'))/100;configuration.classNames=data.getAll('classes');
       const presets={full:{x:0,y:0,width:1,height:1},center:{x:.25,y:.15,width:.5,height:.7},left:{x:0,y:0,width:.5,height:1},right:{x:.5,y:0,width:.5,height:1}};
       if(presets[data.get('zonePreset')])configuration.zone=presets[data.get('zonePreset')];
       const validation=validateProject({...project,configuration});if(!validation.valid)throw new Error(validation.errors.join(' '));
-      checkpoint(project);project.configuration=configuration;ensureMessages(project).push({id:uid(),role:'assistant',text:'Atualizei o analítico com os ajustes que você fez no painel.',changes:[MODES[configuration.mode],`${configuration.classNames.map(c=>CLASSES[c]).join(', ')} · confiança ${Math.round(configuration.confidence*100)}%`],engine:'local'});touch(project);stopTest();closeModal();render();toast('Regras atualizadas.');
+      checkpoint(project);project.configuration=configuration;ensureMessages(project).push({id:uid(),role:'assistant',text:'Atualizei o analítico com os ajustes que você fez no painel.',changes:[MODES[configuration.mode],`${configuration.classNames.map(c=>CLASSES[c]).join(', ')} · confiança ${Math.round(configuration.confidence*100)}%`],engine:'local'});const geometry=data.get('zonePreset')&&data.get('zonePreset')!=='current';touch(project,{geometry});stopTest();closeModal();render();toast('Regras atualizadas.');
     }
     if(form.id==='publication-form')await submitPublication(form);
     if(form.id==='review-form'){const candidate=ui.reviews?.find(item=>item.id===form.dataset.id);if(!candidate)throw new Error('Atualize a fila antes de registrar o parecer.');await api(`/reviews/${encodeURIComponent(candidate.id)}`,'POST',{status:String(data.get('status')),notes:String(data.get('notes')),expectedRevision:candidate.reviewRevision,snapshotSha256:candidate.snapshotSha256});closeModal();await refreshReviews();toast('Parecer registrado sobre esta versão da proposta.');}
@@ -804,14 +820,16 @@ document.addEventListener('submit',async event=>{
         catch(error){if(error.code==='UserNotConfirmedException'){loginModal('confirm',email);return;}throw error;}
         if(result.ChallengeName==='SOFTWARE_TOKEN_MFA'){ui.mfaSession=result.Session;loginModal('mfa',email);return;}
         if(!result.AuthenticationResult)throw new Error('Sua conta exige uma etapa de autenticação ainda não suportada nesta versão.');
-        acceptAuth(result.AuthenticationResult,email);switchWorkspaceForAuth();ui.license=null;closeModal();render();refreshLicense().then(()=>{if(!hasStudioAccess()){go('license');toast(t('toast.signedInLicense'));}else toast('Você entrou no Studio.');});
+        acceptAuth(result.AuthenticationResult,email);switchWorkspaceForAuth();ui.license=null;closeModal();const licensePromise=refreshLicense();const projectsPromise=loadCloudProjects({quiet:true}).catch(error=>({error}));await licensePromise;const projectsResult=await projectsPromise;const plan=loginArrival({licenseLoaded:Boolean(ui.license),licenseActive:Boolean(licenseObject()?.active)});if(plan.showLicenseToast){go('license');toast(t('toast.signedInLicense'),'warning');}else toast(t('toast.signedIn'));if(projectsResult?.error)toast(projectsResult.error.message,'warning');
       }
     }
   }catch(error){formError(form,form.id==='auth-form'?authError(error):error.message);}
   finally{if(submit)submit.disabled=false;}
 });
 
-document.addEventListener('change',event=>{if(event.target.form?.id==='publication-form')syncPricing(event.target.form);});
+document.addEventListener('change',event=>{if(event.target.form?.id==='publication-form')syncPricing(event.target.form);
+  if(event.target.form?.id==='config-form'&&event.target.name==='mode'){const field=event.target.form.querySelector('[data-dwell-field]');const input=field?.querySelector('input');const show=showDwellField(event.target.value);if(field)field.hidden=!show;if(input)input.required=show;}
+});
 document.addEventListener('input',event=>{if(event.target.form?.id==='publication-form')syncPricing(event.target.form);
   const target=event.target;
   if(target.name==='confidence'&&$('#confidence-value'))$('#confidence-value').textContent=target.value+'%';
@@ -841,4 +859,4 @@ $('#video-upload').addEventListener('change',event=>{const file=event.target.fil
 window.addEventListener('hashchange',()=>{closeModal();render();});
 window.addEventListener('pagehide',()=>{stopMedia();save();});
 render();
-fetch('/config.json',{cache:'no-store'}).then(response=>response.ok?response.json():null).then(async config=>{if(config){ui.config=config;if(ui.auth&&ui.auth.expiresAt<=Date.now()&&ui.auth.refreshToken){try{await refreshAuth();}catch{ui.auth=null;sessionStorage.removeItem('merx.studio.auth');switchWorkspaceForAuth();}}if(ui.auth)queueMicrotask(()=>checkMerxAccount());if(ui.auth)refreshLicense();render();}}).catch(()=>{});
+fetch('/config.json',{cache:'no-store'}).then(response=>response.ok?response.json():null).then(async config=>{if(config){ui.config=config;if(ui.auth&&ui.auth.expiresAt<=Date.now()&&ui.auth.refreshToken){try{await refreshAuth();}catch{ui.auth=null;sessionStorage.removeItem('merx.studio.auth');switchWorkspaceForAuth();}}if(ui.auth){queueMicrotask(()=>checkMerxAccount());try{await refreshLicense();}catch{}try{await loadCloudProjects({quiet:true});}catch{}}render();}}).catch(()=>{});

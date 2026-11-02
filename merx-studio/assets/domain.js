@@ -15,6 +15,13 @@ const CLASS_LABELS = {
   motorcycle: 'motos', bicycle: 'bicicletas', dog: 'cachorros', cat: 'gatos',
   backpack: 'mochilas', handbag: 'bolsas', suitcase: 'malas',
 };
+export const DEVICE_FPS_MIN = 1;
+export const DEVICE_FPS_MAX = 10;
+export function clampTargetFps(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEVICE_FPS_MAX;
+  return Math.min(DEVICE_FPS_MAX, Math.max(DEVICE_FPS_MIN, Math.round(n)));
+}
 const DEFAULTS = {
   confidence: 0.65,
   zone: { x: 0.15, y: 0.15, width: 0.7, height: 0.7 },
@@ -23,7 +30,7 @@ const DEFAULTS = {
   minDurationSeconds: 10,
   cooldownSeconds: 30,
   minFrames: 3,
-  targetFps: 5,
+  targetFps: DEVICE_FPS_MAX,
   direction: 'both',
   backendPolicy: 'accelerated',
   targetVariant: 'merx-standard',
@@ -274,7 +281,7 @@ export function validateProject(project) {
   check('duration', 'Tempo de permanência', finiteRange(c.minDurationSeconds, 1, 86400), 'Tempo entre 1 segundo e 24 horas.', 'Use um tempo numérico de 1 a 86400 segundos.');
   check('cooldown', 'Intervalo entre eventos', finiteRange(c.cooldownSeconds, 0, 86400), 'Intervalo entre 0 segundos e 24 horas.', 'Use intervalo numérico de 0 a 86400 segundos.');
   check('frames', 'Confirmação por frames', Number.isInteger(c.minFrames) && c.minFrames >= 1 && c.minFrames <= 60, 'Confirmação de 1 a 60 frames.', 'Use um número inteiro de 1 a 60 frames.');
-  check('fps', 'Taxa solicitada', finiteRange(c.targetFps, 1, 30), 'Solicitação entre 1 e 30 FPS; capacidade ainda não medida.', 'Use uma solicitação numérica de 1 a 30 FPS.');
+  check('fps', 'Taxa solicitada', finiteRange(c.targetFps, DEVICE_FPS_MIN, DEVICE_FPS_MAX), `Solicitação entre ${DEVICE_FPS_MIN} e ${DEVICE_FPS_MAX} FPS, o máximo aceito pelo equipamento.`, `Use uma taxa de ${DEVICE_FPS_MIN} a ${DEVICE_FPS_MAX} FPS.`);
   check('direction', 'Direção', DIRECTIONS.includes(c.direction), 'Direção reconhecida pela regra.', 'Escolha uma direção válida de cruzamento.');
   check('backend', 'Política de execução', ['accelerated', 'accelerated_preferred', 'standard'].includes(c.backendPolicy), 'Política de backend declarada.', 'Escolha accelerated, accelerated_preferred ou standard.');
   check('variant', 'Variante desejada', ['merx-standard', 'merx-pro'].includes(c.targetVariant), 'Perfil Merx declarado; homologação pendente.', 'Escolha merx-standard ou merx-pro.');
@@ -306,7 +313,7 @@ export function buildExecutableSpec(project) {
     deviceSupport: { ...GEOMETRY_SUPPORT } };
 }
 // Spec v2 geometry (optional; older device agents ignore these keys). Mirrors backend device_geometry().
-export const SPEC_DEVICE_VERSION = 2, DEVICE_FPS_MIN = 1, DEVICE_FPS_MAX = 10;
+export const SPEC_DEVICE_VERSION = 2;
 const GEOMETRY_SUPPORT = { zone: true, line: true, direction: true, targetFps: true, requiresDeviceSpec: SPEC_DEVICE_VERSION };
 const DIR_VECTORS = { left_to_right: [1, 0], right_to_left: [-1, 0], top_to_bottom: [0, 1], bottom_to_top: [0, -1] };
 const r4 = v => Math.round(Math.min(1, Math.max(0, Number(v))) * 1e4) / 1e4;
@@ -324,7 +331,7 @@ export function deviceGeometry(c, regra) {
       out.sentido = sense;
     }
   }
-  const f = Number(c.targetFps); out.fps = Number.isFinite(f) && c.targetFps !== null && c.targetFps !== '' ? Math.min(DEVICE_FPS_MAX, Math.max(DEVICE_FPS_MIN, Math.round(f))) : 5;
+  out.fps = clampTargetFps(c.targetFps);
   return out;
 }
 export function buildManifest(project) {
@@ -386,7 +393,7 @@ pub const CONFIDENCE: f32 = ${rustNumber(c.confidence, 0.65)};
 pub const MIN_FRAMES: u32 = ${Number.isInteger(c.minFrames) && c.minFrames > 0 ? c.minFrames : 3};
 pub const DWELL_SECONDS: f64 = ${rustNumber(c.minDurationSeconds, 10)};
 pub const COOLDOWN_SECONDS: f64 = ${rustNumber(c.cooldownSeconds, 30)};
-pub const REQUESTED_FPS: f32 = ${rustNumber(c.targetFps, 5)};
+pub const REQUESTED_FPS: f32 = ${rustNumber(clampTargetFps(c.targetFps), DEVICE_FPS_MAX)};
 pub const DIRECTION: &str = ${rustString(c.direction)};
 pub const CLASSES: &[&str] = &[${classes.map(rustString).join(', ')}];
 pub const ZONE: &[(f32, f32)] = &[${pts.map(p => `(${rustNumber(p.x)}, ${rustNumber(p.y)})`).join(', ')}];
@@ -515,8 +522,13 @@ export function interpretPrompt(project, prompt) {
   const n = normalized(input);
   const changes = [];
   const clarifications = [];
+  let geometryEdit = false;
   function set(key, value, label) {
-    if (JSON.stringify(c[key]) !== JSON.stringify(value)) { c[key] = clone(value); changes.push(label); }
+    if (JSON.stringify(c[key]) !== JSON.stringify(value)) {
+      c[key] = clone(value);
+      changes.push(label);
+      if (key === 'zone' || key === 'line') geometryEdit = true;
+    }
   }
   if (!input) return { project: next, summary: 'Descreva o objeto, a área e a condição que devem gerar o evento.', changes, needsClarification: 'Exemplo: pessoas por 30 segundos na metade direita, com confiança de 75%.' };
 
@@ -557,7 +569,13 @@ export function interpretPrompt(project, prompt) {
   const duration = /(?:permanencia|permanecer|permanecam|permaneca|ficar|fiquem|durante|mais de|por|tempo)\s*(?:(?:de|em|por|para|mais de)\s*)?[:=]?\s*(-?\d+(?:[.,]\d+)?)\s*(segundos?|segs?|s\b|minutos?|min\b|horas?|h\b)/.exec(n);
   if (duration && (requestedMode === 'dwell' || c.mode === 'dwell')) set('minDurationSeconds', seconds(duration[1], duration[2]), `Permanência mínima: ${seconds(duration[1], duration[2])} s.`);
   const fps = /(-?\d+(?:[.,]\d+)?)\s*(?:fps|quadros por segundo|frames por segundo)\b/.exec(n);
-  if (fps) set('targetFps', numeric(fps[1]), `Taxa solicitada: ${numeric(fps[1])} FPS; capacidade a medir.`);
+  if (fps) {
+    const requested = numeric(fps[1]);
+    const applied = clampTargetFps(requested);
+    set('targetFps', applied, applied === Math.round(requested) && requested >= DEVICE_FPS_MIN && requested <= DEVICE_FPS_MAX
+      ? `Taxa solicitada: ${applied} FPS.`
+      : `Taxa solicitada ajustada para ${applied} FPS (máximo do equipamento: ${DEVICE_FPS_MAX}).`);
+  }
   const frames = /(?:confirm(?:acao|ar|e)\s*(?:por|com|em)?\s*|minimo de\s*)(\d+)\s*frames?\b/.exec(n);
   if (frames) set('minFrames', numeric(frames[1]), `Confirmação: ${numeric(frames[1])} frames.`);
 
@@ -602,7 +620,7 @@ export function interpretPrompt(project, prompt) {
   if (!next.description && changes.length) next.description = input;
   if (changes.length) {
     next.updatedAt = new Date().toISOString();
-    next.status = 'draft';
+    next.status = nextProjectStatus(next, { geometry: geometryEdit });
     next.source = generateRust(next);
   }
   const validation = validateProject(next);
@@ -611,4 +629,69 @@ export function interpretPrompt(project, prompt) {
     ? `Atualizei o rascunho local: ${changes.join(' ')} O fluxo e o exemplo Rust acompanham a configuração. Nenhuma inferência neural foi executada.`
     : 'Não alterei o rascunho. Este assistente local reconhece presença, permanência, cruzamento de linha, classes, confiança, tempos, zona, direção e perfil Merx. Peça um desses ajustes ou confira se os valores já estão configurados.';
   return { project: next, summary, changes, ...(clarifications.length ? { needsClarification: clarifications.join(' ') } : {}) };
+}
+
+const REVIEW_STATUSES = new Set(['submitted', 'approved', 'rejected', 'changes_requested']);
+
+export function displayStatus(project) {
+  if (!project || typeof project !== 'object') return 'draft';
+  const published = project.publicationStatus || project.submission?.publicationStatus;
+  if (published === 'published') return 'published';
+  const submissionStatus = project.submission?.status;
+  if (REVIEW_STATUSES.has(submissionStatus)) return submissionStatus;
+  if (project.status === 'published') return 'published';
+  if (REVIEW_STATUSES.has(project.status)) return project.status;
+  return 'draft';
+}
+
+export function statusTone(status) {
+  if (status === 'approved' || status === 'published') return 'success';
+  if (status === 'submitted') return 'blue';
+  if (status === 'changes_requested') return 'warning';
+  if (status === 'rejected') return 'danger';
+  return 'draft';
+}
+
+export function nextProjectStatus(project, { geometry = false } = {}) {
+  const current = project?.status || 'draft';
+  const pending = project?.submission?.status === 'submitted' || current === 'submitted';
+  if (geometry && pending) return 'submitted';
+  if (current === 'submitted') return 'draft';
+  return current;
+}
+
+export function showDwellField(mode) {
+  return mode !== 'line_crossing';
+}
+
+export function triggerKey(mode) {
+  if (mode === 'line_crossing') return 'rule.whenLine';
+  if (mode === 'dwell') return 'rule.whenDwell';
+  return 'rule.whenPresence';
+}
+
+export function loginArrival({ licenseLoaded = false, licenseActive = false } = {}) {
+  const known = Boolean(licenseLoaded);
+  const active = Boolean(licenseActive);
+  return {
+    loadAccountProjects: true,
+    showLicenseToast: known && !active,
+    openLicense: known && !active,
+  };
+}
+
+export function buildTestPayload(project, { deviceId = null, cameraId = null } = {}) {
+  const configuration = clone(projectConfiguration(project));
+  configuration.targetFps = clampTargetFps(configuration.targetFps);
+  const spec = buildExecutableSpec({ ...project, configuration });
+  return {
+    deviceId,
+    cameraId,
+    fps: spec.device.fps,
+    project: {
+      id: project?.id,
+      name: text(project?.name, 120),
+      configuration,
+    },
+  };
 }
